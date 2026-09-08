@@ -1,0 +1,4851 @@
+{
+  "name": "Lead Nurture Sequence",
+  "nodes": [
+    {
+      "id": "hook",
+      "name": "Get Pipeline Stage",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ],
+      "webhookId": "b7f3c1a2-4d5e-4f60-9a1b-2c3d4e5f6a70",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-pipeline-stage",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "notes": "CRM posts here. Body: lead_id, name, email, company, pipeline_stage. Header auth required.",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "DP3UQqhLD93eoBqE",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "id": "normalise",
+      "name": "Normalise Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -170,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// The CRM is not ours and its exports are not clean. A trailing space on\n// \"Contacted \" used to drop the lead silently, and a missing email was not\n// noticed until Gmail rejected it - by which point a row was written and an\n// AI call paid for.\nconst b = ($input.first().json || {}).body || {};\nconst str = function (v) { return String(v === undefined || v === null ? '' : v).trim(); };\n\nconst lead = {\n  lead_id: str(b.lead_id),\n  name: str(b.name),\n  email: str(b.email).toLowerCase(),\n  company: str(b.company),\n  pipeline_stage: str(b.pipeline_stage)\n};\n\nconst problems = [];\nif (!lead.lead_id) { problems.push('no lead_id'); }\nif (!lead.email) { problems.push('no email address'); }\nelse if (lead.email.indexOf('@') < 1 || lead.email.indexOf('.', lead.email.indexOf('@')) < 0) {\n  problems.push('email does not look like an address');\n}\nif (lead.pipeline_stage.toLowerCase() !== 'contacted') {\n  problems.push('stage is \"' + lead.pipeline_stage + '\", not Contacted');\n}\n\nlead.usable = problems.length === 0;\nlead.reject_reason = problems.join('; ');\nlead.created_at = new Date().toISOString();\n\n// What the unsubscribe link carries. Not the CRM id: that is guessable, and\n// the opt-out endpoint has to stay open to anyone holding the link. It is\n// also drawn from an alphabet that survives a URL untouched, so the value\n// that comes back is always the value that went out.\nlet token = '';\ntry {\n  const buf = new Uint8Array(24);\n  crypto.getRandomValues(buf);\n  token = Array.prototype.map.call(buf, function (b) {\n    return ('0' + b.toString(16)).slice(-2);\n  }).join('');\n} catch (e) {\n  // Code node sandboxes vary in what globals they expose. Weaker than\n  // getRandomValues, but never empty, and still far from guessable.\n  while (token.length < 48) { token += Math.random().toString(36).slice(2); }\n  token = token.slice(0, 48);\n}\nlead.unsub_token = token;\nreturn [{ json: lead }];"
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Trims every field, lower-cases the email, and decides in one place whether the lead is usable."
+    },
+    {
+      "id": "ifusable",
+      "name": "Check if Contacted",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        80,
+        0
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c-usable",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.usable }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "notes": "Usable: has a lead id, a real-looking email, and is in the Contacted stage."
+    },
+    {
+      "id": "rejected",
+      "name": "Record Rejected Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        330,
+        280
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Rejected",
+          "cachedResultName": "Rejected"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $json.lead_id || ('UNKNOWN-' + $execution.id) }}",
+            "name": "={{ $json.name }}",
+            "email": "={{ $json.email }}",
+            "company": "={{ $json.company }}",
+            "pipeline_stage": "={{ $json.pipeline_stage }}",
+            "status": "REJECTED",
+            "final_status": "",
+            "thread_id": "",
+            "message_id": "",
+            "error_reason": "={{ $json.reject_reason }}",
+            "created_at": "={{ $json.created_at }}"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "A malformed CRM payload leaves a row saying why it was refused - and if that row cannot be written, you are told.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "seen",
+      "name": "Seen This Lead Before",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        330,
+        0
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "lead_id",
+              "lookupValue": "={{ $json.lead_id }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Asks the sheet whether this lead already has a row. alwaysOutputData so \"not found\" is an empty item rather than a stopped branch.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "ifnew",
+      "name": "New Lead Only",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        450,
+        0
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c-new",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ !$json.lead_id }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "notes": "True means no row exists yet, so this is a new lead. A CRM retry finds its own row and goes down the false branch."
+    },
+    {
+      "id": "seenbefore",
+      "name": "Record Duplicate Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        580,
+        280
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Rejected",
+          "cachedResultName": "Rejected"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "name": "={{ $('Normalise Lead').first().json.name }}",
+            "email": "={{ $('Normalise Lead').first().json.email }}",
+            "company": "={{ $('Normalise Lead').first().json.company }}",
+            "pipeline_stage": "={{ $('Normalise Lead').first().json.pipeline_stage }}",
+            "status": "DUPLICATE",
+            "final_status": "",
+            "thread_id": "",
+            "message_id": "",
+            "error_reason": "Already seen. No email sent.",
+            "created_at": "={{ $('Normalise Lead').first().json.created_at }}"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Makes the discard visible, so a re-sent lead that does nothing can be explained.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "logdb",
+      "name": "Put the Details in DB",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1080,
+        0
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "name": "={{ $('Normalise Lead').first().json.name }}",
+            "email": "={{ $('Normalise Lead').first().json.email }}",
+            "company": "={{ $('Normalise Lead').first().json.company }}",
+            "pipeline_stage": "={{ $('Normalise Lead').first().json.pipeline_stage }}",
+            "status": "New",
+            "final_status": "",
+            "thread_id": "",
+            "message_id": "",
+            "error_reason": "",
+            "created_at": "={{ $('Normalise Lead').first().json.created_at }}",
+            "unsub_token": "={{ $('Normalise Lead').first().json.unsub_token }}"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "One row per lead. Not retried: a lost response on a retried append writes the lead twice.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "welcomemodel",
+      "name": "Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1260,
+        -230
+      ],
+      "parameters": {
+        "modelName": "models/gemini-3.6-flash",
+        "options": {}
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "BxZmKFDPOmxKNsih",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "welcomeparser",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1420,
+        -230
+      ],
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"subject\": \"short, lower-case, under nine words\",\n  \"body\": \"the full email body as plain text, three short paragraphs at most\"\n}"
+      }
+    },
+    {
+      "id": "welcomeagent",
+      "name": "WELCOME STAGE",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1330,
+        0
+      ],
+      "parameters": {
+        "promptType": "define",
+        "hasOutputParser": true,
+        "text": "=Write the first email to a new lead who has just entered our pipeline.\n\nLead name: {{ $('Normalise Lead').first().json.name }}\nCompany: {{ $('Normalise Lead').first().json.company }}\n\nThis is the first time we have written to them. Introduce us briefly, say why\nwe are getting in touch, and ask one easy question they can answer in a\nsentence. Do not pitch. Do not attach a calendar link.",
+        "options": {
+          "systemMessage": "You write short, plain emails on behalf of a small sales team.\nWrite like one person emailing another, not like a company.\nShort sentences. No jargon, no buzzwords, no exclamation marks.\nNever invent facts about the lead and never promise anything specific.\nDo not use the words \"synergy\", \"leverage\", \"circle back\" or \"touch base\".\nSign off as the sales team. Never write a placeholder like [Your Name].\nNever write an empty subject or an empty body."
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "guard1",
+      "name": "Check Email Is Real",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const o = ($input.first().json || {}).output || {};\nconst subject = String(o.subject || '').trim();\nconst body = String(o.body || '').trim();\n\nif (!subject) { throw new Error('The model returned an empty subject, so nothing was sent.'); }\nif (!body) { throw new Error('The model returned an empty body, so nothing was sent.'); }\nif (body.length < 40) {\n  throw new Error('The model returned a body of only ' + body.length + ' characters, too short to be a real email.');\n}\n\nreturn [{ json: { subject: subject, body: body } }];"
+      },
+      "onError": "continueErrorOutput",
+      "notes": "The output parser checks the shape, not the content. An empty subject and body passes it cleanly."
+    },
+    {
+      "id": "sendwelcome",
+      "name": "Send a Message",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1830,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $('Normalise Lead').first().json.email }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}\n\n-- \nYou are getting this because you enquired with us.\nTo stop these emails: https://n8n-xe09.srv1922344.hstgr.cloud/webhook/ln-unsubscribe?t={{ $('Normalise Lead').first().json.unsub_token }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Returns threadId and id. Both are stored: the id is what the follow-ups reply to.",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "cFvvHW2uwDptkQvf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "identifyrow",
+      "name": "Identify Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2080,
+        0
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "lead_id",
+              "lookupValue": "={{ $('Normalise Lead').first().json.lead_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "alwaysOutputData so an empty result is visible. Without it the branch ended silently with the lead already emailed.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "latestrow",
+      "name": "Get the Latest Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2330,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// New Lead Only makes duplicates impossible upstream, so this should find\n// exactly one row. It is kept because humans edit the sheet and a duplicate\n// can still appear by hand.\nconst rows = $input.all().filter(function (r) { return r.json && r.json.lead_id; });\n\nif (!rows.length) {\n  throw new Error('The welcome email was sent but no sheet row can be found for this lead, so the sequence cannot continue. Check the Leads tab.');\n}\n\n// created_at is written RAW so it stays an ISO string and this parse works.\n// When Sheets was left to format it, the value came back as a date serial,\n// the parse produced NaN, the sort collapsed and this returned the OLDEST row.\nrows.sort(function (a, b) {\n  return (Date.parse(b.json.created_at) || 0) - (Date.parse(a.json.created_at) || 0);\n});\n\nreturn [rows[0]];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "updaterow",
+      "name": "Update Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2580,
+        0
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "status": "Welcome Email",
+            "thread_id": "={{ $('Send a Message').first().json.threadId }}",
+            "message_id": "={{ $('Send a Message').first().json.id }}"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "A Sheets update that matches nothing is a silent no-op, so the error path matters here.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "optoutcheck",
+      "name": "On the Do Not Email List?",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        700,
+        0
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Unsubscribed",
+          "cachedResultName": "Unsubscribed"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "email",
+              "lookupValue": "={{ $('Normalise Lead').first().json.email }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Reads the Unsubscribed tab. An empty result means this person never opted out.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "ifoptout",
+      "name": "Never Opted Out?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        830,
+        0
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c-optout",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ !$json.email }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "notes": "True means no row on the Unsubscribed tab, so it is safe to email them."
+    },
+    {
+      "id": "recoptout",
+      "name": "Record Opted Out Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        830,
+        280
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Rejected",
+          "cachedResultName": "Rejected"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "name": "={{ $('Normalise Lead').first().json.name }}",
+            "email": "={{ $('Normalise Lead').first().json.email }}",
+            "company": "={{ $('Normalise Lead').first().json.company }}",
+            "pipeline_stage": "={{ $('Normalise Lead').first().json.pipeline_stage }}",
+            "status": "UNSUBSCRIBED",
+            "final_status": "Unsubscribed",
+            "thread_id": "",
+            "message_id": "",
+            "error_reason": "On the do-not-email list. No email sent.",
+            "created_at": "={{ $('Normalise Lead').first().json.created_at }}"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "A visible dead end. Silence here would look identical to a bug.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "wait2",
+      "name": "Wait for Reply 2 Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -420,
+        1050
+      ],
+      "webhookId": "d9f5e3c4-6a7b-4182-9c3d-4e5f6a7b8c92",
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 2,
+        "unit": "days"
+      },
+      "notes": "Two days. Shorten to minutes for testing, and put it back before go-live."
+    },
+    {
+      "id": "sub2",
+      "name": "Still Subscribed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -170,
+        1050
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Unsubscribed",
+          "cachedResultName": "Unsubscribed"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "email",
+              "lookupValue": "={{ $('Normalise Lead').first().json.email }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "subgate2",
+      "name": "Not Opted Out",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        80,
+        1050
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c-sub2",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ !$json.email }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "notes": "True means still subscribed. False stops the sequence here for good."
+    },
+    {
+      "id": "substop2",
+      "name": "Stopped: Unsubscribed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        80,
+        770
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "status": "Unsubscribed",
+            "final_status": "Unsubscribed"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "thread2",
+      "name": "Check if There is a Reply",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        330,
+        1050
+      ],
+      "parameters": {
+        "resource": "thread",
+        "operation": "get",
+        "threadId": "={{ $('Send a Message').first().json.threadId }}",
+        "simple": true,
+        "options": {
+          "returnOnlyMessages": false
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "cFvvHW2uwDptkQvf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "read2",
+      "name": "Read Reply Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        580,
+        1050
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const j = $input.first().json || {};\nconst msgs = Array.isArray(j.messages) ? j.messages : null;\n\n// Fail CLOSED. Every ambiguity here ends in a real inbox, so if the thread\n// cannot be read we stop and tell someone rather than assuming silence and\n// sending another email.\nif (!msgs) {\n  throw new Error('Could not read the Gmail thread, so it is unknown whether the lead replied. Refusing to guess.');\n}\n\n// n8n simplifies every thread message before we see it, and simplification\n// DELETES labelIds, replacing it with labels: an array of {id, name} objects.\n// Reading labelIds returned undefined, so the SENT filter never fired, our own\n// welcome email counted as an inbound reply, and every lead was marked Replied\n// two days after being written to. Read the objects instead.\nconst OURS = function (m) {\n  const labels = Array.isArray(m.labels) ? m.labels : [];\n  return labels.some(function (l) {\n    const v = l && (l.id || l.name);\n    return v === 'SENT' || v === 'DRAFT';\n  });\n};\n\n// Anchored to the start of the local part. Testing the whole From header threw\n// away real people at addresses like sarah@notificationlabs.com.\nconst ROBOT = /^(mailer-daemon|postmaster|no-?reply|do-?not-?reply|bounce|auto-?reply)/i;\nconst localPart = function (m) {\n  const addr = (String(m.From || m.from || '').match(/[^\\s<>]+@[^\\s<>]+/) || [''])[0];\n  return addr.split('@')[0].toLowerCase();\n};\n\nconst inbound = msgs.filter(function (m) {\n  if (OURS(m)) { return false; }\n  if (ROBOT.test(localPart(m))) { return false; }\n  return true;\n});\n\n// A hard bounce is not a reply, but it is also not silence - the address is\n// dead and two more emails to it would only damage sending reputation.\nconst bounced = msgs.some(function (m) { return /^(mailer-daemon|postmaster)/i.test(localPart(m)); });\n\nreturn [{\n  json: {\n    replied: inbound.length > 0,\n    bounced: bounced,\n    inbound_count: inbound.length,\n    total_messages: msgs.length,\n    senders: inbound.map(function (m) { return String(m.From || m.from || 'unknown'); }).slice(0, 5)\n  }\n}];"
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Decides by who sent each message, not how many there are. Our own sends and bounce notices are not replies. An out-of-office from the lead IS a reply, by choice."
+    },
+    {
+      "id": "bounce2",
+      "name": "Did It Bounce",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        830,
+        1050
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c-bounce2",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.bounced }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "notes": "A bounce is not a reply, but it is not silence either. The address is dead."
+    },
+    {
+      "id": "bstop2",
+      "name": "Stopped: Bounced",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        830,
+        770
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "status": "Bounced",
+            "final_status": "Bounced",
+            "error_reason": "The address rejected our email. Nothing further was sent."
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "No team email. A dead address is not a lead to hand to anyone.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "if2",
+      "name": "If Not, Continue",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1330,
+        1050
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c-replied2",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.replied }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "notes": "True is the REPLIED branch. The node name reads the other way round; the wiring is correct."
+    },
+    {
+      "id": "replied2",
+      "name": "Update Status to Replied",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1580,
+        770
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "status": "Replied",
+            "final_status": "Assigned"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "assign2",
+      "name": "Assign to Team",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1830,
+        770
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "your-email@example.com",
+        "subject": "=Lead replied: {{ $('Normalise Lead').first().json.name }}",
+        "emailType": "text",
+        "message": "={{ $('Normalise Lead').first().json.name }} from {{ $('Normalise Lead').first().json.company }} has replied.\n\nEmail: {{ $('Normalise Lead').first().json.email }}\nThread: https://mail.google.com/mail/u/0/#inbox/{{ $('Send a Message').first().json.threadId }}\n\nThe automation has stopped for this lead. It is yours now.",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Goes to TEAM_EMAIL, which is still a placeholder until Leo supplies a real inbox.",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "cFvvHW2uwDptkQvf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "fumodel",
+      "name": "Model2",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1510,
+        900
+      ],
+      "parameters": {
+        "modelName": "models/gemini-3.6-flash",
+        "options": {}
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "BxZmKFDPOmxKNsih",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "fuparser",
+      "name": "Structured Output",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1670,
+        900
+      ],
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"subject\": \"short, lower-case, under nine words\",\n  \"body\": \"the full email body as plain text, three short paragraphs at most\"\n}"
+      }
+    },
+    {
+      "id": "fuagent",
+      "name": "FOLLOW UP STAGE",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1580,
+        1130
+      ],
+      "parameters": {
+        "promptType": "define",
+        "hasOutputParser": true,
+        "text": "=Write a short follow-up. We emailed this lead two days ago and heard nothing.\n\nLead name: {{ $('Normalise Lead').first().json.name }}\nCompany: {{ $('Normalise Lead').first().json.company }}\n\nAssume they were busy, not uninterested. Four sentences at most.\nAdd one new reason to reply that the first email did not mention.\nDo not repeat the first email. Do not say \"just following up\" or \"bumping this\nto the top of your inbox\". Do not guilt them.",
+        "options": {
+          "systemMessage": "You write short, plain emails on behalf of a small sales team.\nWrite like one person emailing another, not like a company.\nShort sentences. No jargon, no buzzwords, no exclamation marks.\nNever invent facts about the lead and never promise anything specific.\nDo not use the words \"synergy\", \"leverage\", \"circle back\" or \"touch base\".\nSign off as the sales team. Never write a placeholder like [Your Name].\nNever write an empty subject or an empty body."
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "guard2",
+      "name": "Check Follow Up Is Real",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1830,
+        1130
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const o = ($input.first().json || {}).output || {};\nconst subject = String(o.subject || '').trim();\nconst body = String(o.body || '').trim();\n\nif (!subject) { throw new Error('The model returned an empty subject, so nothing was sent.'); }\nif (!body) { throw new Error('The model returned an empty body, so nothing was sent.'); }\nif (body.length < 40) {\n  throw new Error('The model returned a body of only ' + body.length + ' characters, too short to be a real email.');\n}\n\nreturn [{ json: { subject: subject, body: body } }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "send2",
+      "name": "Send a Message1",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2080,
+        1130
+      ],
+      "parameters": {
+        "resource": "thread",
+        "operation": "reply",
+        "threadId": "={{ $('Send a Message').first().json.threadId }}",
+        "messageId": "={{ $('Send a Message').first().json.id }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}\n\n-- \nYou are getting this because you enquired with us.\nTo stop these emails: https://n8n-xe09.srv1922344.hstgr.cloud/webhook/ln-unsubscribe?t={{ $('Normalise Lead').first().json.unsub_token }}",
+        "options": {
+          "appendAttribution": false,
+          "replyToRecipientsOnly": true
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "A real reply. Gmail carries the original subject, so the agent subject is deliberately unused here.",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "cFvvHW2uwDptkQvf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "tail2",
+      "name": "Update to F.U Stage",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2330,
+        1130
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "status": "Follow Up"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "wait3",
+      "name": "Wait for Reply 2 Days1",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -420,
+        2050
+      ],
+      "webhookId": "e0a6f4d5-7b8c-4293-8d4e-5f6a7b8c9d03",
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 2,
+        "unit": "days"
+      },
+      "notes": "Two days. Shorten to minutes for testing, and put it back before go-live."
+    },
+    {
+      "id": "sub3",
+      "name": "Still Subscribed1",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -170,
+        2050
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Unsubscribed",
+          "cachedResultName": "Unsubscribed"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "email",
+              "lookupValue": "={{ $('Normalise Lead').first().json.email }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "subgate3",
+      "name": "Not Opted Out1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        80,
+        2050
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c-sub3",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ !$json.email }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "notes": "True means still subscribed. False stops the sequence here for good."
+    },
+    {
+      "id": "substop3",
+      "name": "Stopped: Unsubscribed1",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        80,
+        1770
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "status": "Unsubscribed",
+            "final_status": "Unsubscribed"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "thread3",
+      "name": "Check if There is a Reply1",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        330,
+        2050
+      ],
+      "parameters": {
+        "resource": "thread",
+        "operation": "get",
+        "threadId": "={{ $('Send a Message').first().json.threadId }}",
+        "simple": true,
+        "options": {
+          "returnOnlyMessages": false
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "cFvvHW2uwDptkQvf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "read3",
+      "name": "Read Reply Status1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        580,
+        2050
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const j = $input.first().json || {};\nconst msgs = Array.isArray(j.messages) ? j.messages : null;\n\n// Fail CLOSED. Every ambiguity here ends in a real inbox, so if the thread\n// cannot be read we stop and tell someone rather than assuming silence and\n// sending another email.\nif (!msgs) {\n  throw new Error('Could not read the Gmail thread, so it is unknown whether the lead replied. Refusing to guess.');\n}\n\n// n8n simplifies every thread message before we see it, and simplification\n// DELETES labelIds, replacing it with labels: an array of {id, name} objects.\n// Reading labelIds returned undefined, so the SENT filter never fired, our own\n// welcome email counted as an inbound reply, and every lead was marked Replied\n// two days after being written to. Read the objects instead.\nconst OURS = function (m) {\n  const labels = Array.isArray(m.labels) ? m.labels : [];\n  return labels.some(function (l) {\n    const v = l && (l.id || l.name);\n    return v === 'SENT' || v === 'DRAFT';\n  });\n};\n\n// Anchored to the start of the local part. Testing the whole From header threw\n// away real people at addresses like sarah@notificationlabs.com.\nconst ROBOT = /^(mailer-daemon|postmaster|no-?reply|do-?not-?reply|bounce|auto-?reply)/i;\nconst localPart = function (m) {\n  const addr = (String(m.From || m.from || '').match(/[^\\s<>]+@[^\\s<>]+/) || [''])[0];\n  return addr.split('@')[0].toLowerCase();\n};\n\nconst inbound = msgs.filter(function (m) {\n  if (OURS(m)) { return false; }\n  if (ROBOT.test(localPart(m))) { return false; }\n  return true;\n});\n\n// A hard bounce is not a reply, but it is also not silence - the address is\n// dead and two more emails to it would only damage sending reputation.\nconst bounced = msgs.some(function (m) { return /^(mailer-daemon|postmaster)/i.test(localPart(m)); });\n\nreturn [{\n  json: {\n    replied: inbound.length > 0,\n    bounced: bounced,\n    inbound_count: inbound.length,\n    total_messages: msgs.length,\n    senders: inbound.map(function (m) { return String(m.From || m.from || 'unknown'); }).slice(0, 5)\n  }\n}];"
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Decides by who sent each message, not how many there are. Our own sends and bounce notices are not replies. An out-of-office from the lead IS a reply, by choice."
+    },
+    {
+      "id": "bounce3",
+      "name": "Did It Bounce1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        830,
+        2050
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c-bounce3",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.bounced }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "notes": "A bounce is not a reply, but it is not silence either. The address is dead."
+    },
+    {
+      "id": "bstop3",
+      "name": "Stopped: Bounced1",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        830,
+        1770
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "status": "Bounced",
+            "final_status": "Bounced",
+            "error_reason": "The address rejected our email. Nothing further was sent."
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "No team email. A dead address is not a lead to hand to anyone.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "if3",
+      "name": "If False, Continue",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1330,
+        2050
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c-replied3",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.replied }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "notes": "True is the REPLIED branch. The node name reads the other way round; the wiring is correct."
+    },
+    {
+      "id": "replied3",
+      "name": "Update Status to Replied1",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1580,
+        1770
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "status": "Replied",
+            "final_status": "Assigned"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "assign3",
+      "name": "Assign to Team1",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1830,
+        1770
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "your-email@example.com",
+        "subject": "=Lead replied after follow-up: {{ $('Normalise Lead').first().json.name }}",
+        "emailType": "text",
+        "message": "={{ $('Normalise Lead').first().json.name }} from {{ $('Normalise Lead').first().json.company }} has replied.\n\nEmail: {{ $('Normalise Lead').first().json.email }}\nThread: https://mail.google.com/mail/u/0/#inbox/{{ $('Send a Message').first().json.threadId }}\n\nThe automation has stopped for this lead. It is yours now.",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Goes to TEAM_EMAIL, which is still a placeholder until Leo supplies a real inbox.",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "cFvvHW2uwDptkQvf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "termodel",
+      "name": "Model1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1510,
+        1900
+      ],
+      "parameters": {
+        "modelName": "models/gemini-3.6-flash",
+        "options": {}
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "BxZmKFDPOmxKNsih",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "terparser",
+      "name": "Structured Output Parser2",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1670,
+        1900
+      ],
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"subject\": \"short, lower-case, under nine words\",\n  \"body\": \"the full email body as plain text, three short paragraphs at most\"\n}"
+      }
+    },
+    {
+      "id": "teragent",
+      "name": "TERMINATION STAGE",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1580,
+        2130
+      ],
+      "parameters": {
+        "promptType": "define",
+        "hasOutputParser": true,
+        "text": "=Write the last email in the sequence. We have written twice and heard nothing.\n\nLead name: {{ $('Normalise Lead').first().json.name }}\nCompany: {{ $('Normalise Lead').first().json.company }}\n\nClose the loop warmly. Say we will stop emailing, that there is no hard\nfeeling, and that they can reply any time if the timing changes.\nThree sentences. No final pitch, no discount, no last-chance language.\nThis email should make them comfortable coming back later.",
+        "options": {
+          "systemMessage": "You write short, plain emails on behalf of a small sales team.\nWrite like one person emailing another, not like a company.\nShort sentences. No jargon, no buzzwords, no exclamation marks.\nNever invent facts about the lead and never promise anything specific.\nDo not use the words \"synergy\", \"leverage\", \"circle back\" or \"touch base\".\nSign off as the sales team. Never write a placeholder like [Your Name].\nNever write an empty subject or an empty body."
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "guard3",
+      "name": "Check Closing Is Real",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1830,
+        2130
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const o = ($input.first().json || {}).output || {};\nconst subject = String(o.subject || '').trim();\nconst body = String(o.body || '').trim();\n\nif (!subject) { throw new Error('The model returned an empty subject, so nothing was sent.'); }\nif (!body) { throw new Error('The model returned an empty body, so nothing was sent.'); }\nif (body.length < 40) {\n  throw new Error('The model returned a body of only ' + body.length + ' characters, too short to be a real email.');\n}\n\nreturn [{ json: { subject: subject, body: body } }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "send3",
+      "name": "Send Termination Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2080,
+        2130
+      ],
+      "parameters": {
+        "resource": "thread",
+        "operation": "reply",
+        "threadId": "={{ $('Send a Message').first().json.threadId }}",
+        "messageId": "={{ $('Send a Message').first().json.id }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}\n\n-- \nYou are getting this because you enquired with us.\nTo stop these emails: https://n8n-xe09.srv1922344.hstgr.cloud/webhook/ln-unsubscribe?t={{ $('Normalise Lead').first().json.unsub_token }}",
+        "options": {
+          "appendAttribution": false,
+          "replyToRecipientsOnly": true
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "A real reply. Gmail carries the original subject, so the agent subject is deliberately unused here.",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "cFvvHW2uwDptkQvf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "tail3",
+      "name": "Tag as Not Interested",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2330,
+        2130
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Normalise Lead').first().json.lead_id }}",
+            "status": "Not Interested",
+            "final_status": "Not Interested"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "explainfail",
+      "name": "Explain Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        2900
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Every error output lands here. Without it a lead could be emailed and then\n// abandoned mid-sequence with the sheet still saying \"New\", and nobody would\n// find out for days.\nconst e = $input.first().json || {};\n\nlet lead = {};\ntry { lead = $('Normalise Lead').first().json || {}; } catch (err) { lead = {}; }\n\nlet reason = '';\nif (typeof e.error === 'string') { reason = e.error; }\nelse if (e.error && typeof e.error.message === 'string') { reason = e.error.message; }\nelse if (typeof e.message === 'string') { reason = e.message; }\nelse { reason = JSON.stringify(e).slice(0, 400); }\n\nreturn [{\n  json: {\n    // Unique per run. A bare \"UNKNOWN\" made every unidentifiable failure\n    // match the same row and overwrite the reason before it, so the sheet\n    // showed one failure where there had been ten.\n    lead_id: lead.lead_id || ('UNKNOWN-' + $execution.id),\n    name: lead.name || '',\n    email: lead.email || '',\n    reason: String(reason).slice(0, 900),\n    execution_id: $execution.id\n  }\n}];"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "recordfail",
+      "name": "Record Failure",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        330,
+        2900
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $json.lead_id }}",
+            "status": "FAILED",
+            "error_reason": "={{ $json.reason }}"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "alertfail",
+      "name": "Alert the Team",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        580,
+        2900
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "your-email@example.com",
+        "subject": "=Lead nurture failed: {{ $('Explain Failure').first().json.lead_id }}",
+        "emailType": "text",
+        "message": "=A lead stopped partway through the sequence.\n\nLead: {{ $('Explain Failure').first().json.name }} ({{ $('Explain Failure').first().json.email }})\nLead id: {{ $('Explain Failure').first().json.lead_id }}\nReason: {{ $('Explain Failure').first().json.reason }}\nExecution: {{ $('Explain Failure').first().json.execution_id }}\n\nThey may already have received an email. Check before contacting them.",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "onError": "stopWorkflow",
+      "notes": "The point of the error path. A failure nobody is told about is the same as no error handling at all.",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "cFvvHW2uwDptkQvf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "unsubget",
+      "name": "Unsubscribe Link",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        3700
+      ],
+      "webhookId": "5c1d8e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "ln-unsubscribe",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "notes": "The address in the footer of every prospect email. Shows a page, changes nothing."
+    },
+    {
+      "id": "confirmpage",
+      "name": "Confirm Page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -170,
+        3700
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Unsubscribe</title><style>body{font-family:system-ui,-apple-system,\"Segoe UI\",sans-serif;max-width:34rem;margin:4rem auto;padding:0 1.5rem;color:#111;line-height:1.6}button{font:inherit;padding:.75rem 1.5rem;border:0;border-radius:.4rem;background:#111;color:#fff;cursor:pointer}</style></head><body><h1>Unsubscribe</h1><p>Press the button and we will stop emailing you.</p><form method=\"post\" action=\"https://n8n-xe09.srv1922344.hstgr.cloud/webhook/ln-unsubscribe-confirm\"><input type=\"hidden\" name=\"t\" value=\"{{ /^[A-Za-z0-9]{16,64}$/.test(String($json.query.t || '').slice(0, 64)) ? String($json.query.t || '').slice(0, 64) : '' }}\"><button type=\"submit\">Yes, unsubscribe me</button></form></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "content-type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unsubpost",
+      "name": "Unsubscribe Confirm",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        4000
+      ],
+      "webhookId": "6d2e9f30-4b5c-4d6e-9f70-8b9c0d1e2f31",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ln-unsubscribe-confirm",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "notes": "Where the button on the confirm page posts. This is the one that writes."
+    },
+    {
+      "id": "readoptout",
+      "name": "Read Opt Out",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -170,
+        4000
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $input.first().json.body || {};\nconst raw = String(b.t || '');\n\n// Checked again here. The confirm page is not the only thing that can post\n// to this address. Refused, not repaired: a token we cannot match is not a\n// token to be tidied up, and quietly changing it is how someone ends up\n// filed under a name no suppression check will ever look for.\nif (!/^[A-Za-z0-9]{16,64}$/.test(raw)) {\n  throw new Error('The unsubscribe link was incomplete or malformed, so there is nobody to remove.');\n}\nreturn [{ json: { unsub_token: raw, unsubscribed_at: new Date().toISOString() } }];"
+      },
+      "onError": "continueErrorOutput",
+      "notes": "A bad link ends on the Problem Page, not on a raw n8n error screen."
+    },
+    {
+      "id": "lookupoptout",
+      "name": "Look Up Opt Out Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        80,
+        4000
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "unsub_token",
+              "lookupValue": "={{ $json.unsub_token }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "alwaysOutputData so an unmatched token reaches the check below instead of stalling the browser.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "tokenfound",
+      "name": "Check the Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        330,
+        4000
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const row = $input.first().json || {};\nif (!row.email) {\n  throw new Error('That unsubscribe link does not match any lead we hold, so there is nobody to remove.');\n}\nreturn [{ json: row }];"
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Never tell someone they are unsubscribed when we could not work out who they are."
+    },
+    {
+      "id": "addoptout",
+      "name": "Add to Do Not Email List",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        580,
+        4000
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Unsubscribed",
+          "cachedResultName": "Unsubscribed"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsubscribed_at",
+              "displayName": "unsubscribed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $json.lead_id }}",
+            "email": "={{ $json.email }}",
+            "unsubscribed_at": "={{ $('Read Opt Out').first().json.unsubscribed_at }}"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "markoptout",
+      "name": "Mark Lead Unsubscribed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        830,
+        4000
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "Three Stage Lead Nurture",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pipeline_stage",
+              "displayName": "pipeline_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_status",
+              "displayName": "final_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_reason",
+              "displayName": "error_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unsub_token",
+              "displayName": "unsub_token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "value": {
+            "lead_id": "={{ $('Check the Token').first().json.lead_id }}",
+            "status": "Unsubscribed",
+            "final_status": "Unsubscribed"
+          }
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "notes": "Cosmetic next to the list itself. An unknown id is a silent no-op here, which is fine.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iFXqcyvwh4DYkt3s",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "donepage",
+      "name": "Unsubscribed Page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1080,
+        4000
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>You are unsubscribed</title><style>body{font-family:system-ui,-apple-system,\"Segoe UI\",sans-serif;max-width:34rem;margin:4rem auto;padding:0 1.5rem;color:#111;line-height:1.6}button{font:inherit;padding:.75rem 1.5rem;border:0;border-radius:.4rem;background:#111;color:#fff;cursor:pointer}</style></head><body><h1>You are unsubscribed</h1><p>We have removed you from this list. You will not get any more emails from this sequence.</p></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "content-type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "problempage",
+      "name": "Unsubscribe Problem Page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1080,
+        4280
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Something went wrong</title><style>body{font-family:system-ui,-apple-system,\"Segoe UI\",sans-serif;max-width:34rem;margin:4rem auto;padding:0 1.5rem;color:#111;line-height:1.6}button{font:inherit;padding:.75rem 1.5rem;border:0;border-radius:.4rem;background:#111;color:#fff;cursor:pointer}</style></head><body><h1>Something went wrong</h1><p>We could not process that just now. Please reply to any of our emails with the word STOP and a person will remove you.</p></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "content-type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "note1",
+      "name": "Stage 1 note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -470,
+        -620
+      ],
+      "parameters": {
+        "width": 3400,
+        "height": 220,
+        "color": 3,
+        "content": "## STAGE 1: Collect leads in the Contacted stage\n\nThe CRM posts a lead. It is trimmed and validated, refused with a reason if it is not usable,\nand checked against every lead seen before so a CRM retry cannot email anyone twice.\nAn agent writes the welcome email, a guard refuses to send it if it came back empty,\nand the Gmail thread id and message id are stored on the row."
+      }
+    },
+    {
+      "id": "note2",
+      "name": "Stage 2 note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -470,
+        430
+      ],
+      "parameters": {
+        "width": 2900,
+        "height": 220,
+        "color": 4,
+        "content": "## STAGE 2: Follow up with leads who have not replied\n\nTwo days later the thread is read. A reply hands the lead to the team and stops here.\nSilence sends a follow-up as a real reply inside the same conversation.\n\nA reply means any inbound message from the lead. Our own sends and bounce notices do not count.\nAn out-of-office DOES count as a reply, by choice: a person looks at it instead of a robot emailing again."
+      }
+    },
+    {
+      "id": "note3",
+      "name": "Stage 3 note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -470,
+        1430
+      ],
+      "parameters": {
+        "width": 2900,
+        "height": 220,
+        "color": 2,
+        "content": "## STAGE 3: Close the loop on non-responsive leads\n\nTwo more days, the same test. Still nothing: a short, warm close saying we will stop emailing\nand they are welcome back any time. Not Interested is a resting state, not a dead end."
+      }
+    },
+    {
+      "id": "note4",
+      "name": "Failure note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -470,
+        2280
+      ],
+      "parameters": {
+        "width": 2200,
+        "height": 220,
+        "color": 1,
+        "content": "## When something breaks\n\nEvery error output lands here. The row is marked FAILED with the reason and the team is emailed.\nA lead that stops halfway has usually already received an email, so the alert says so.\n\n**Alerts go to your-email@example.com.**"
+      }
+    },
+    {
+      "id": "note5",
+      "name": "Unsubscribe note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -470,
+        3080
+      ],
+      "parameters": {
+        "width": 2200,
+        "height": 220,
+        "color": 5,
+        "content": "## Unsubscribe\n\nEvery prospect email carries a link to the top row. The link only shows a page, because link\nscanners fetch every URL in an email before the human sees it. The button posts to the row below,\nwhich writes the person onto the Unsubscribed tab.\n\nThat tab is checked before the first email and again after every wait, so an opt-out stops the\nsequence wherever it has got to - and stops it again if the CRM re-imports the same person later."
+      }
+    }
+  ],
+  "connections": {
+    "Get Pipeline Stage": {
+      "main": [
+        [
+          {
+            "node": "Normalise Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise Lead": {
+      "main": [
+        [
+          {
+            "node": "Check if Contacted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Contacted": {
+      "main": [
+        [
+          {
+            "node": "Seen This Lead Before",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Rejected Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seen This Lead Before": {
+      "main": [
+        [
+          {
+            "node": "New Lead Only",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Lead Only": {
+      "main": [
+        [
+          {
+            "node": "On the Do Not Email List?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Duplicate Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On the Do Not Email List?": {
+      "main": [
+        [
+          {
+            "node": "Never Opted Out?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Never Opted Out?": {
+      "main": [
+        [
+          {
+            "node": "Put the Details in DB",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Opted Out Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Put the Details in DB": {
+      "main": [
+        [
+          {
+            "node": "WELCOME STAGE",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WELCOME STAGE": {
+      "main": [
+        [
+          {
+            "node": "Check Email Is Real",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Email Is Real": {
+      "main": [
+        [
+          {
+            "node": "Send a Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a Message": {
+      "main": [
+        [
+          {
+            "node": "Identify Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identify Row": {
+      "main": [
+        [
+          {
+            "node": "Get the Latest Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get the Latest Row": {
+      "main": [
+        [
+          {
+            "node": "Update Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Row": {
+      "main": [
+        [
+          {
+            "node": "Wait for Reply 2 Days",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Reply 2 Days": {
+      "main": [
+        [
+          {
+            "node": "Still Subscribed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Subscribed": {
+      "main": [
+        [
+          {
+            "node": "Not Opted Out",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Opted Out": {
+      "main": [
+        [
+          {
+            "node": "Check if There is a Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stopped: Unsubscribed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stopped: Unsubscribed": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if There is a Reply": {
+      "main": [
+        [
+          {
+            "node": "Read Reply Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Reply Status": {
+      "main": [
+        [
+          {
+            "node": "Did It Bounce",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Did It Bounce": {
+      "main": [
+        [
+          {
+            "node": "Stopped: Bounced",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Not, Continue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stopped: Bounced": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Not, Continue": {
+      "main": [
+        [
+          {
+            "node": "Update Status to Replied",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "FOLLOW UP STAGE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status to Replied": {
+      "main": [
+        [
+          {
+            "node": "Assign to Team",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign to Team": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FOLLOW UP STAGE": {
+      "main": [
+        [
+          {
+            "node": "Check Follow Up Is Real",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Follow Up Is Real": {
+      "main": [
+        [
+          {
+            "node": "Send a Message1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a Message1": {
+      "main": [
+        [
+          {
+            "node": "Update to F.U Stage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update to F.U Stage": {
+      "main": [
+        [
+          {
+            "node": "Wait for Reply 2 Days1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Reply 2 Days1": {
+      "main": [
+        [
+          {
+            "node": "Still Subscribed1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Subscribed1": {
+      "main": [
+        [
+          {
+            "node": "Not Opted Out1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Opted Out1": {
+      "main": [
+        [
+          {
+            "node": "Check if There is a Reply1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stopped: Unsubscribed1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stopped: Unsubscribed1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if There is a Reply1": {
+      "main": [
+        [
+          {
+            "node": "Read Reply Status1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Reply Status1": {
+      "main": [
+        [
+          {
+            "node": "Did It Bounce1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Did It Bounce1": {
+      "main": [
+        [
+          {
+            "node": "Stopped: Bounced1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If False, Continue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stopped: Bounced1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If False, Continue": {
+      "main": [
+        [
+          {
+            "node": "Update Status to Replied1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "TERMINATION STAGE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status to Replied1": {
+      "main": [
+        [
+          {
+            "node": "Assign to Team1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign to Team1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TERMINATION STAGE": {
+      "main": [
+        [
+          {
+            "node": "Check Closing Is Real",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Closing Is Real": {
+      "main": [
+        [
+          {
+            "node": "Send Termination Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Termination Email": {
+      "main": [
+        [
+          {
+            "node": "Tag as Not Interested",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag as Not Interested": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unsubscribe Link": {
+      "main": [
+        [
+          {
+            "node": "Confirm Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unsubscribe Confirm": {
+      "main": [
+        [
+          {
+            "node": "Read Opt Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Opt Out": {
+      "main": [
+        [
+          {
+            "node": "Look Up Opt Out Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unsubscribe Problem Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look Up Opt Out Lead": {
+      "main": [
+        [
+          {
+            "node": "Check the Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check the Token": {
+      "main": [
+        [
+          {
+            "node": "Add to Do Not Email List",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unsubscribe Problem Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to Do Not Email List": {
+      "main": [
+        [
+          {
+            "node": "Mark Lead Unsubscribed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unsubscribe Problem Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Lead Unsubscribed": {
+      "main": [
+        [
+          {
+            "node": "Unsubscribed Page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unsubscribed Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Rejected Lead": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Duplicate Lead": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Opted Out Lead": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Explain Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explain Failure": {
+      "main": [
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Failure": {
+      "main": [
+        [
+          {
+            "node": "Alert the Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "WELCOME STAGE",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "WELCOME STAGE",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "FOLLOW UP STAGE",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "FOLLOW UP STAGE",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "TERMINATION STAGE",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser2": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "TERMINATION STAGE",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "executionTimeout": -1
+  }
+}
