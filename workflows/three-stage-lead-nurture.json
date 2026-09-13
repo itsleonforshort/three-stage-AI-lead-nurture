@@ -730,7 +730,7 @@
         "sendTo": "={{ $('Normalise Lead').first().json.email }}",
         "subject": "={{ $json.subject }}",
         "emailType": "text",
-        "message": "={{ $json.body }}\n\n-- \nYou are getting this because you enquired with us.\nTo stop these emails: https://n8n-xe09.srv1922344.hstgr.cloud/webhook/ln-unsubscribe?t={{ $('Normalise Lead').first().json.unsub_token }}",
+        "message": "={{ $json.body }}\n\n-- \nYou are getting this because you enquired with us.\nTo stop these emails: https://<your-n8n-instance>/webhook/ln-unsubscribe?t={{ $('Normalise Lead').first().json.unsub_token }}",
         "options": {
           "appendAttribution": false
         }
@@ -2014,7 +2014,7 @@
         "threadId": "={{ $('Send a Message').first().json.threadId }}",
         "messageId": "={{ $('Send a Message').first().json.id }}",
         "emailType": "text",
-        "message": "={{ $json.body }}\n\n-- \nYou are getting this because you enquired with us.\nTo stop these emails: https://n8n-xe09.srv1922344.hstgr.cloud/webhook/ln-unsubscribe?t={{ $('Normalise Lead').first().json.unsub_token }}",
+        "message": "={{ $json.body }}\n\n-- \nYou are getting this because you enquired with us.\nTo stop these emails: https://<your-n8n-instance>/webhook/ln-unsubscribe?t={{ $('Normalise Lead').first().json.unsub_token }}",
         "options": {
           "appendAttribution": false,
           "replyToRecipientsOnly": true
@@ -2990,7 +2990,7 @@
         "threadId": "={{ $('Send a Message').first().json.threadId }}",
         "messageId": "={{ $('Send a Message').first().json.id }}",
         "emailType": "text",
-        "message": "={{ $json.body }}\n\n-- \nYou are getting this because you enquired with us.\nTo stop these emails: https://n8n-xe09.srv1922344.hstgr.cloud/webhook/ln-unsubscribe?t={{ $('Normalise Lead').first().json.unsub_token }}",
+        "message": "={{ $json.body }}\n\n-- \nYou are getting this because you enquired with us.\nTo stop these emails: https://<your-n8n-instance>/webhook/ln-unsubscribe?t={{ $('Normalise Lead').first().json.unsub_token }}",
         "options": {
           "appendAttribution": false,
           "replyToRecipientsOnly": true
@@ -3395,7 +3395,7 @@
       ],
       "parameters": {
         "respondWith": "text",
-        "responseBody": "=<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Unsubscribe</title><style>body{font-family:system-ui,-apple-system,\"Segoe UI\",sans-serif;max-width:34rem;margin:4rem auto;padding:0 1.5rem;color:#111;line-height:1.6}button{font:inherit;padding:.75rem 1.5rem;border:0;border-radius:.4rem;background:#111;color:#fff;cursor:pointer}</style></head><body><h1>Unsubscribe</h1><p>Press the button and we will stop emailing you.</p><form method=\"post\" action=\"https://n8n-xe09.srv1922344.hstgr.cloud/webhook/ln-unsubscribe-confirm\"><input type=\"hidden\" name=\"t\" value=\"{{ /^[A-Za-z0-9]{16,64}$/.test(String($json.query.t || '').slice(0, 64)) ? String($json.query.t || '').slice(0, 64) : '' }}\"><button type=\"submit\">Yes, unsubscribe me</button></form></body></html>",
+        "responseBody": "=<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Unsubscribe</title><style>body{font-family:system-ui,-apple-system,\"Segoe UI\",sans-serif;max-width:34rem;margin:4rem auto;padding:0 1.5rem;color:#111;line-height:1.6}button{font:inherit;padding:.75rem 1.5rem;border:0;border-radius:.4rem;background:#111;color:#fff;cursor:pointer}</style></head><body><h1>Unsubscribe</h1><p>Press the button and we will stop emailing you.</p><form method=\"post\" action=\"https://<your-n8n-instance>/webhook/ln-unsubscribe-confirm\"><input type=\"hidden\" name=\"t\" value=\"{{ /^[A-Za-z0-9]{16,64}$/.test(String($json.query.t || '').slice(0, 64)) ? String($json.query.t || '').slice(0, 64) : '' }}\"><button type=\"submit\">Yes, unsubscribe me</button></form></body></html>",
         "options": {
           "responseHeaders": {
             "entries": [
